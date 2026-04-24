@@ -5,9 +5,13 @@ import (
 	"fmt"
 	"log/slog"
 
-	"vault-kv-diff/internal/config"
-	"vault-kv-diff/internal/vault"
+	"github.com/purisev/vault-kv-diff/internal/config"
 )
+
+type vaultClient interface {
+	ListAllSecrets(ctx context.Context, mount string) ([]string, error)
+	ReadSecretData(ctx context.Context, mount, path string) (map[string]interface{}, error)
+}
 
 type DuplicateKey struct {
 	Path string `json:"path"`
@@ -24,15 +28,19 @@ type Result struct {
 }
 
 type Comparator struct {
-	client *vault.Client
+	client vaultClient
 	ex     *config.CompiledExclusions
 	kv1    string
 	kv2    string
 	log    *slog.Logger
 }
 
-func New(client *vault.Client, ex *config.CompiledExclusions, kv1, kv2 string, log *slog.Logger) *Comparator {
+func New(client vaultClient, ex *config.CompiledExclusions, kv1, kv2 string, log *slog.Logger) *Comparator {
 	return &Comparator{client: client, ex: ex, kv1: kv1, kv2: kv2, log: log}
+}
+
+func (c *Comparator) SetExclusions(ex *config.CompiledExclusions) {
+	c.ex = ex
 }
 
 func (c *Comparator) Compare(ctx context.Context) (*Result, error) {

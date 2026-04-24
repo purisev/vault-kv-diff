@@ -14,10 +14,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"vault-kv-diff/internal/comparator"
-	"vault-kv-diff/internal/config"
-	"vault-kv-diff/internal/metrics"
-	vclient "vault-kv-diff/internal/vault"
+	"github.com/purisev/vault-kv-diff/internal/comparator"
+	"github.com/purisev/vault-kv-diff/internal/config"
+	"github.com/purisev/vault-kv-diff/internal/metrics"
+	vclient "github.com/purisev/vault-kv-diff/internal/vault"
 )
 
 func main() {
@@ -60,6 +60,12 @@ func main() {
 		start := time.Now()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
+
+		if ex, err := config.LoadExclusions(cfg.ConfigFile); err != nil {
+			log.Warn("failed to reload exclusions, using previous", "err", err)
+		} else {
+			cmp.SetExclusions(ex)
+		}
 
 		// Refresh Vault token before scan (relevant for kubernetes auth)
 		if err := client.Refresh(ctx); err != nil {

@@ -1,4 +1,4 @@
-module vault-kv-diff
+module github.com/purisev/vault-kv-diff
 
 go 1.23
 

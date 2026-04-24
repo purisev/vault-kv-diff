@@ -113,6 +113,24 @@ func (c *Config) CompileExclusions() (*CompiledExclusions, error) {
 	return ex, nil
 }
 
+// LoadExclusions reads the exclusions file and compiles its patterns.
+// If the file does not exist, empty exclusions are returned.
+// On error, the caller should log and continue with the previous exclusions.
+func LoadExclusions(file string) (*CompiledExclusions, error) {
+	data, err := os.ReadFile(file)
+	if os.IsNotExist(err) {
+		return &CompiledExclusions{Keys: make(map[string]struct{})}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading config %s: %w", file, err)
+	}
+	var fc fileConfig
+	if err := yaml.Unmarshal(data, &fc); err != nil {
+		return nil, fmt.Errorf("parsing config %s: %w", file, err)
+	}
+	return (&Config{Exclude: fc.Exclude}).CompileExclusions()
+}
+
 func loadFileConfig(cfg *Config) error {
 	data, err := os.ReadFile(cfg.ConfigFile)
 	if os.IsNotExist(err) {

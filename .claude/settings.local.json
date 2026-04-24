@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go build *)",
+      "Bash(grep 'bin/go$')",
+      "Bash(curl -sL https://go.dev/dl/go1.23.8.linux-amd64.tar.gz -o /tmp/go.tar.gz)",
+      "Bash(tar -C /usr/local -xzf /tmp/go.tar.gz)",
+      "Bash(rm /tmp/go.tar.gz)"
+    ]
+  }
+}

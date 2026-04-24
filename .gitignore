@@ -1,0 +1,32 @@
+# Binary
+vault-kv-diff
+
+# Build output
+/dist/
+/bin/
+
+# Environment
+.env
+*.env.local
+
+# Test output
+*.test
+*.out
+coverage.html
+coverage.txt
+
+# Go workspace
+go.work
+go.work.sum
+
+# Dependency vendor directory
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+#LLM
+CLAUDE.md

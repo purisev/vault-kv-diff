@@ -6,7 +6,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
-	"vault-kv-diff/internal/comparator"
+	"github.com/purisev/vault-kv-diff/internal/comparator"
 )
 
 type Metrics struct {
