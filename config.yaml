@@ -1,0 +1,21 @@
+exclude:
+  # Exact key names — always skip during comparison
+  keys:
+    - environment
+    - env
+    - namespace
+    - app_name
+    - service_name
+
+  # Regex patterns matching key names
+  key_patterns:
+    - "^env_.*"
+    - ".*_env$"
+    - "^APP_ENV$"
+    - "^ENVIRONMENT$"
+
+  # Regex patterns matching secret paths (relative to mount, no leading slash)
+  path_patterns:
+    - "^common/.*"
+    - "^shared/.*"
+    - "^global/.*"

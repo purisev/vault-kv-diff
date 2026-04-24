@@ -1,0 +1,10 @@
+services:
+  vault-kv-diff:
+    build: .
+    image: vault-kv-diff:latest
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "${HTTP_PORT:-9090}:${HTTP_PORT:-9090}"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
