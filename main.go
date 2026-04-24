@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -150,10 +151,19 @@ func main() {
 
 		w.Header().Set("Content-Type", "application/json")
 		if r == nil {
-			_, _ = w.Write([]byte(`{"duplicates":[],"paths_compared":0}`))
+			_, _ = w.Write([]byte(`{"duplicates":[],"paths_affected":0,"paths_compared":0}`))
 			return
 		}
-		_ = json.NewEncoder(w).Encode(r)
+
+		paths := groupByPath(r.Duplicates)
+		_ = json.NewEncoder(w).Encode(reportResponse{
+			Duplicates:    paths,
+			PathsAffected: len(paths),
+			PathsCompared: r.PathsCompared,
+			KV1:           r.KV1,
+			KV2:           r.KV2,
+			ScannedAt:     r.ScannedAt,
+		})
 	})
 
 	srv := &http.Server{
@@ -193,6 +203,37 @@ func main() {
 			return
 		}
 	}
+}
+
+type reportPath struct {
+	Path string   `json:"path"`
+	Keys []string `json:"keys"`
+}
+
+type reportResponse struct {
+	Duplicates    []reportPath `json:"duplicates"`
+	PathsAffected int          `json:"paths_affected"`
+	PathsCompared int          `json:"paths_compared"`
+	KV1           string       `json:"kv1"`
+	KV2           string       `json:"kv2"`
+	ScannedAt     time.Time    `json:"scanned_at"`
+}
+
+func groupByPath(dups []comparator.DuplicateKey) []reportPath {
+	grouped := make(map[string]*reportPath, len(dups))
+	for _, d := range dups {
+		if _, ok := grouped[d.Path]; !ok {
+			grouped[d.Path] = &reportPath{Path: d.Path}
+		}
+		grouped[d.Path].Keys = append(grouped[d.Path].Keys, d.Key)
+	}
+	paths := make([]reportPath, 0, len(grouped))
+	for _, rp := range grouped {
+		sort.Strings(rp.Keys)
+		paths = append(paths, *rp)
+	}
+	sort.Slice(paths, func(i, j int) bool { return paths[i].Path < paths[j].Path })
+	return paths
 }
 
 func parseLogLevel(level string) slog.Level {

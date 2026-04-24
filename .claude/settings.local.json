@@ -5,7 +5,11 @@
       "Bash(grep 'bin/go$')",
       "Bash(curl -sL https://go.dev/dl/go1.23.8.linux-amd64.tar.gz -o /tmp/go.tar.gz)",
       "Bash(tar -C /usr/local -xzf /tmp/go.tar.gz)",
-      "Bash(rm /tmp/go.tar.gz)"
+      "Bash(rm /tmp/go.tar.gz)",
+      "WebSearch",
+      "Bash(/usr/local/go/bin/go build *)",
+      "Bash(/usr/local/go/bin/go test *)",
+      "Bash(/usr/local/go/bin/go mod *)"
     ]
   }
 }

@@ -10,11 +10,12 @@ import (
 )
 
 type Metrics struct {
-	duplicateKey  *prometheus.GaugeVec
-	scanDuration  prometheus.Gauge
-	scanTimestamp prometheus.Gauge
-	scanErrors    prometheus.Counter
-	pathsCompared *prometheus.GaugeVec
+	duplicateKey   *prometheus.GaugeVec
+	duplicateCount *prometheus.GaugeVec
+	scanDuration   prometheus.Gauge
+	scanTimestamp  prometheus.Gauge
+	scanErrors     prometheus.Counter
+	pathsCompared  *prometheus.GaugeVec
 
 	mu         sync.Mutex
 	activeKeys map[labelKey]struct{}
@@ -32,6 +33,11 @@ func New(reg prometheus.Registerer) *Metrics {
 			Help: "1 if a secret key has the same value in both KV mounts",
 		}, []string{"kv1", "kv2", "path", "key"}),
 
+		duplicateCount: f.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "vault_kv_duplicate_count",
+			Help: "Total number of duplicate key-value pairs found in the last scan",
+		}, []string{"kv1", "kv2"}),
+
 		scanDuration: f.NewGauge(prometheus.GaugeOpts{
 			Name: "vault_kv_scan_duration_seconds",
 			Help: "Duration of the last scan in seconds",
@@ -48,7 +54,7 @@ func New(reg prometheus.Registerer) *Metrics {
 		}),
 
 		pathsCompared: f.NewGaugeVec(prometheus.GaugeOpts{
-			Name: "vault_kv_paths_compared_total",
+			Name: "vault_kv_paths_compared",
 			Help: "Number of paths compared in the last scan",
 		}, []string{"kv1", "kv2"}),
 
@@ -67,6 +73,7 @@ func (m *Metrics) RecordScan(result *comparator.Result, durationSecs, timestamp 
 	m.scanDuration.Set(durationSecs)
 	m.scanTimestamp.Set(timestamp)
 	m.pathsCompared.WithLabelValues(result.KV1, result.KV2).Set(float64(result.PathsCompared))
+	m.duplicateCount.WithLabelValues(result.KV1, result.KV2).Set(float64(len(result.Duplicates)))
 
 	newKeys := make(map[labelKey]struct{}, len(result.Duplicates))
 	for _, d := range result.Duplicates {

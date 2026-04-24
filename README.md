@@ -22,11 +22,12 @@ It scans both mounts on a schedule, finds paths and keys where values match, and
 
 | Metric | Type | Description |
 |---|---|---|
-| `vault_kv_duplicate_key` | Gauge | 1 for each key with the same value in both mounts. Labels: `kv1`, `kv2`, `path`, `key` |
+| `vault_kv_duplicate_count` | Gauge | Total number of duplicate key-value pairs in the last scan. Labels: `kv1`, `kv2`. Use this for alerting. |
+| `vault_kv_duplicate_key` | Gauge | 1 for each key with the same value in both mounts. Labels: `kv1`, `kv2`, `path`, `key`. Use for drill-down. |
 | `vault_kv_scan_duration_seconds` | Gauge | Duration of the last scan |
 | `vault_kv_scan_last_timestamp_seconds` | Gauge | Unix timestamp of the last successful scan |
 | `vault_kv_scan_errors_total` | Counter | Total number of scan errors |
-| `vault_kv_paths_compared_total` | Gauge | Number of paths compared in the last scan. Labels: `kv1`, `kv2` |
+| `vault_kv_paths_compared` | Gauge | Number of paths compared in the last scan. Labels: `kv1`, `kv2` |
 
 The `vault_kv_duplicate_key` metric is automatically removed when a duplicate is resolved on the next scan.
 
@@ -34,13 +35,13 @@ The `vault_kv_duplicate_key` metric is automatically removed when a duplicate is
 
 ```yaml
 - alert: VaultKvDuplicateSecrets
-  expr: vault_kv_duplicate_key > 0
+  expr: vault_kv_duplicate_count > 0
   for: 0m
   labels:
     severity: warning
   annotations:
-    summary: "Same secret in stage and prod"
-    description: "Path {{ $labels.path }}, key {{ $labels.key }} has the same value in mounts {{ $labels.kv1 }} and {{ $labels.kv2 }}"
+    summary: "Identical secrets found between {{ $labels.kv1 }} and {{ $labels.kv2 }}"
+    description: "{{ $value }} key(s) have the same value in both mounts. Check /report for details."
 ```
 
 ---
@@ -59,12 +60,14 @@ Example `/report` response:
 ```json
 {
   "duplicates": [
-    {"path": "app/database", "key": "DB_HOST", "kv1": "stage", "kv2": "prod"},
-    {"path": "app/redis",    "key": "REDIS_URL", "kv1": "stage", "kv2": "prod"}
+    {"path": "app/database", "keys": ["DB_HOST", "DB_PASS"]},
+    {"path": "app/redis",    "keys": ["REDIS_URL"]}
   ],
+  "paths_affected": 2,
   "paths_compared": 42,
   "kv1": "stage",
-  "kv2": "prod"
+  "kv2": "prod",
+  "scanned_at": "2026-04-24T10:00:00Z"
 }
 ```
 
