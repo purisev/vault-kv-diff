@@ -1,10 +1,10 @@
 # vault-kv-diff
 
-A service for detecting secrets with identical values across two KV v2 mounts in HashiCorp Vault — for example, `stage` and `prod`.
+A service for detecting secrets with identical values across pairs of KV v2 mounts in HashiCorp Vault.
 
-It scans both mounts on a schedule, finds paths and keys where values match, and exposes them as Prometheus metrics. Secret values are never transmitted or logged.
+It scans configured mount pairs on a schedule, finds paths and keys where values match, and exposes them as Prometheus metrics. Secret values are never transmitted or logged.
 
-**Why:** to ensure that stage and prod are not sharing the same database URLs, access tokens, or API keys.
+**Why:** to ensure that two environments are not sharing the same database URLs, access tokens, or API keys.
 
 ---
 
@@ -59,15 +59,19 @@ Example `/report` response:
 
 ```json
 {
-  "duplicates": [
-    {"path": "app/database", "keys": ["DB_HOST", "DB_PASS"]},
-    {"path": "app/redis",    "keys": ["REDIS_URL"]}
-  ],
-  "paths_affected": 2,
-  "paths_compared": 42,
-  "kv1": "stage",
-  "kv2": "prod",
-  "scanned_at": "2026-04-24T10:00:00Z"
+  "pairs": [
+    {
+      "kv1": "mount-a",
+      "kv2": "mount-b",
+      "duplicates": [
+        {"path": "app/database", "keys": ["DB_HOST", "DB_PASS"]},
+        {"path": "app/redis",    "keys": ["REDIS_URL"]}
+      ],
+      "paths_affected": 2,
+      "paths_compared": 42,
+      "scanned_at": "2026-04-24T10:00:00Z"
+    }
+  ]
 }
 ```
 
@@ -85,40 +89,45 @@ Example `/report` response:
 | `VAULT_K8S_ROLE` | — | Vault role name, required when `VAULT_AUTH_METHOD=kubernetes` |
 | `VAULT_K8S_MOUNT` | `kubernetes` | Kubernetes auth backend mount path in Vault |
 | `VAULT_K8S_TOKEN_PATH` | `/var/run/secrets/kubernetes.io/serviceaccount/token` | Path to the SA token inside the pod |
-| `KV1_MOUNT` | — | First KV mount (e.g. `stage`), required |
-| `KV2_MOUNT` | — | Second KV mount (e.g. `prod`), required |
 | `SCAN_INTERVAL` | `5m` | Scan interval as a Go duration string (`30s`, `5m`, `1h`) |
 | `SCAN_TIMEOUT` | `4m` | Per-scan context timeout; should be less than `SCAN_INTERVAL` |
 | `HTTP_PORT` | `9090` | HTTP server port |
 | `LOG_LEVEL` | `info` | Log level: `debug`, `info`, `warn`, `error` |
-| `CONFIG_FILE` | `config.yaml` | Path to the exclusions file |
+| `CONFIG_FILE` | `config.yaml` | Path to the config file |
 
-### Exclusions file (`config.yaml`)
+### Config file (`config.yaml`)
 
-Lets you skip keys and paths where matching values are acceptable or expected.
+Defines mount pairs to compare and per-pair exclusion rules. Reloaded automatically before every scan — no restart needed.
 
 ```yaml
-exclude:
-  # Exact key names — always skip during comparison
-  keys:
-    - environment
-    - env
-    - namespace
-    - app_name
+pairs:
+  - kv1: mount-a
+    kv2: mount-b
+    exclude:
+      # Exact key names — always skip during comparison
+      keys:
+        - environment
+        - env
+        - namespace
+        - app_name
 
-  # Regex patterns matching key names
-  key_patterns:
-    - "^env_.*"
-    - ".*_env$"
-    - "^APP_ENV$"
+      # Regex patterns matching key names
+      key_patterns:
+        - "^env_.*"
+        - ".*_env$"
+        - "^APP_ENV$"
 
-  # Regex patterns matching secret paths (relative to mount, no leading slash)
-  path_patterns:
-    - "^common/.*"
-    - "^shared/.*"
+      # Regex patterns matching secret paths (relative to mount, no leading slash)
+      path_patterns:
+        - "^common/.*"
+        - "^shared/.*"
+
+  - kv1: mount-c
+    kv2: mount-a
+    # no exclusions — compare all keys
 ```
 
-Patterns use Go [`regexp`](https://pkg.go.dev/regexp/syntax) syntax. Changes to the file take effect only after restarting the service.
+Multiple pairs are scanned in parallel. Patterns use Go [`regexp`](https://pkg.go.dev/regexp/syntax) syntax.
 
 ---
 
@@ -164,10 +173,6 @@ spec:
               value: "kubernetes"
             - name: VAULT_K8S_ROLE
               value: "vault-kv-diff"
-            - name: KV1_MOUNT
-              value: "stage"
-            - name: KV2_MOUNT
-              value: "prod"
             - name: SCAN_INTERVAL
               value: "5m"
             - name: SCAN_TIMEOUT
@@ -223,17 +228,15 @@ vault write auth/kubernetes/role/vault-kv-diff \
   ttl=1h
 ```
 
-Minimal policy:
+Minimal policy (repeat for each configured mount):
 
 ```hcl
-path "stage/*" {
-  capabilities = ["read", "list"]
-}
-
-path "prod/*" {
+path "<mount>/*" {
   capabilities = ["read", "list"]
 }
 ```
+
+> **Security note:** run the service under a dedicated service account in its own namespace (e.g. `monitoring`), never under the Vault service account or in the `vault` namespace. The Vault SA typically carries broad or root-level permissions — inheriting them would violate the principle of least privilege and turn a compromised vault-kv-diff into a full Vault breach. The role above restricts access to `read` and `list` only, which is all the service needs.
 
 ---
 

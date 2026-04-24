@@ -16,24 +16,11 @@ type Config struct {
 	K8sRole      string
 	K8sMountPath string
 	K8sTokenPath string
-	KV1Mount     string
-	KV2Mount     string
 	ScanInterval time.Duration
 	ScanTimeout  time.Duration
 	HTTPPort     string
 	LogLevel     string
 	ConfigFile   string
-	Exclude      ExcludeConfig
-}
-
-type ExcludeConfig struct {
-	Keys         []string `yaml:"keys"`
-	KeyPatterns  []string `yaml:"key_patterns"`
-	PathPatterns []string `yaml:"path_patterns"`
-}
-
-type fileConfig struct {
-	Exclude ExcludeConfig `yaml:"exclude"`
 }
 
 // CompiledExclusions holds pre-compiled regexps for fast matching.
@@ -41,6 +28,30 @@ type CompiledExclusions struct {
 	Keys         map[string]struct{}
 	KeyPatterns  []*regexp.Regexp
 	PathPatterns []*regexp.Regexp
+}
+
+// CompiledPair is a mount pair with its compiled exclusions, ready for scanning.
+type CompiledPair struct {
+	KV1        string
+	KV2        string
+	Exclusions *CompiledExclusions
+}
+
+// rawExcludeConfig mirrors the YAML "exclude" block inside a pair.
+type rawExcludeConfig struct {
+	Keys         []string `yaml:"keys"`
+	KeyPatterns  []string `yaml:"key_patterns"`
+	PathPatterns []string `yaml:"path_patterns"`
+}
+
+type rawPairConfig struct {
+	KV1     string           `yaml:"kv1"`
+	KV2     string           `yaml:"kv2"`
+	Exclude rawExcludeConfig `yaml:"exclude"`
+}
+
+type rawPairsFile struct {
+	Pairs []rawPairConfig `yaml:"pairs"`
 }
 
 func Load() (*Config, error) {
@@ -61,8 +72,6 @@ func Load() (*Config, error) {
 		K8sRole:      getenv("VAULT_K8S_ROLE", ""),
 		K8sMountPath: getenv("VAULT_K8S_MOUNT", "kubernetes"),
 		K8sTokenPath: getenv("VAULT_K8S_TOKEN_PATH", "/var/run/secrets/kubernetes.io/serviceaccount/token"),
-		KV1Mount:     getenv("KV1_MOUNT", ""),
-		KV2Mount:     getenv("KV2_MOUNT", ""),
 		ScanInterval: interval,
 		ScanTimeout:  timeout,
 		HTTPPort:     getenv("HTTP_PORT", "9090"),
@@ -85,34 +94,55 @@ func Load() (*Config, error) {
 	default:
 		return nil, fmt.Errorf("unknown VAULT_AUTH_METHOD=%q (allowed: token, kubernetes)", cfg.AuthMethod)
 	}
-	if cfg.KV1Mount == "" {
-		return nil, fmt.Errorf("KV1_MOUNT is required")
-	}
-	if cfg.KV2Mount == "" {
-		return nil, fmt.Errorf("KV2_MOUNT is required")
-	}
 
-	if err := loadFileConfig(cfg); err != nil {
-		return nil, err
-	}
 	return cfg, nil
 }
 
-func (c *Config) CompileExclusions() (*CompiledExclusions, error) {
-	ex := &CompiledExclusions{
-		Keys: make(map[string]struct{}, len(c.Exclude.Keys)),
+// LoadPairs reads the config file and returns compiled mount pairs.
+// Returns an error if the file is missing, malformed, or defines no pairs.
+// On hot-reload error the caller should log and continue with the previous pairs.
+func LoadPairs(file string) ([]CompiledPair, error) {
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return nil, fmt.Errorf("reading config %s: %w", file, err)
 	}
-	for _, k := range c.Exclude.Keys {
+	var pf rawPairsFile
+	if err := yaml.Unmarshal(data, &pf); err != nil {
+		return nil, fmt.Errorf("parsing config %s: %w", file, err)
+	}
+	if len(pf.Pairs) == 0 {
+		return nil, fmt.Errorf("config %s defines no pairs", file)
+	}
+
+	compiled := make([]CompiledPair, 0, len(pf.Pairs))
+	for i, p := range pf.Pairs {
+		if p.KV1 == "" || p.KV2 == "" {
+			return nil, fmt.Errorf("pair[%d]: kv1 and kv2 are required", i)
+		}
+		ex, err := compileExclusions(p.Exclude)
+		if err != nil {
+			return nil, fmt.Errorf("pair[%d] (%s/%s): %w", i, p.KV1, p.KV2, err)
+		}
+		compiled = append(compiled, CompiledPair{KV1: p.KV1, KV2: p.KV2, Exclusions: ex})
+	}
+	return compiled, nil
+}
+
+func compileExclusions(raw rawExcludeConfig) (*CompiledExclusions, error) {
+	ex := &CompiledExclusions{
+		Keys: make(map[string]struct{}, len(raw.Keys)),
+	}
+	for _, k := range raw.Keys {
 		ex.Keys[k] = struct{}{}
 	}
-	for _, p := range c.Exclude.KeyPatterns {
+	for _, p := range raw.KeyPatterns {
 		re, err := regexp.Compile(p)
 		if err != nil {
 			return nil, fmt.Errorf("invalid key_pattern %q: %w", p, err)
 		}
 		ex.KeyPatterns = append(ex.KeyPatterns, re)
 	}
-	for _, p := range c.Exclude.PathPatterns {
+	for _, p := range raw.PathPatterns {
 		re, err := regexp.Compile(p)
 		if err != nil {
 			return nil, fmt.Errorf("invalid path_pattern %q: %w", p, err)
@@ -120,40 +150,6 @@ func (c *Config) CompileExclusions() (*CompiledExclusions, error) {
 		ex.PathPatterns = append(ex.PathPatterns, re)
 	}
 	return ex, nil
-}
-
-// LoadExclusions reads the exclusions file and compiles its patterns.
-// If the file does not exist, empty exclusions are returned.
-// On error, the caller should log and continue with the previous exclusions.
-func LoadExclusions(file string) (*CompiledExclusions, error) {
-	data, err := os.ReadFile(file)
-	if os.IsNotExist(err) {
-		return &CompiledExclusions{Keys: make(map[string]struct{})}, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("reading config %s: %w", file, err)
-	}
-	var fc fileConfig
-	if err := yaml.Unmarshal(data, &fc); err != nil {
-		return nil, fmt.Errorf("parsing config %s: %w", file, err)
-	}
-	return (&Config{Exclude: fc.Exclude}).CompileExclusions()
-}
-
-func loadFileConfig(cfg *Config) error {
-	data, err := os.ReadFile(cfg.ConfigFile)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("reading config %s: %w", cfg.ConfigFile, err)
-	}
-	var fc fileConfig
-	if err := yaml.Unmarshal(data, &fc); err != nil {
-		return fmt.Errorf("parsing config %s: %w", cfg.ConfigFile, err)
-	}
-	cfg.Exclude = fc.Exclude
-	return nil
 }
 
 func getenv(key, def string) string {

@@ -15,7 +15,7 @@ func TestGroupByPath_Empty(t *testing.T) {
 
 func TestGroupByPath_SinglePathSingleKey(t *testing.T) {
 	dups := []comparator.DuplicateKey{
-		{Path: "app/db", Key: "HOST", KV1: "stage", KV2: "prod"},
+		{Path: "app/db", Key: "HOST", KV1: "alpha", KV2: "beta"},
 	}
 	got := groupByPath(dups)
 	if len(got) != 1 {
@@ -31,9 +31,9 @@ func TestGroupByPath_SinglePathSingleKey(t *testing.T) {
 
 func TestGroupByPath_MultipleKeysOnePath(t *testing.T) {
 	dups := []comparator.DuplicateKey{
-		{Path: "app/db", Key: "PASS", KV1: "stage", KV2: "prod"},
-		{Path: "app/db", Key: "HOST", KV1: "stage", KV2: "prod"},
-		{Path: "app/db", Key: "PORT", KV1: "stage", KV2: "prod"},
+		{Path: "app/db", Key: "PASS", KV1: "alpha", KV2: "beta"},
+		{Path: "app/db", Key: "HOST", KV1: "alpha", KV2: "beta"},
+		{Path: "app/db", Key: "PORT", KV1: "alpha", KV2: "beta"},
 	}
 	got := groupByPath(dups)
 	if len(got) != 1 {
@@ -49,9 +49,9 @@ func TestGroupByPath_MultipleKeysOnePath(t *testing.T) {
 
 func TestGroupByPath_MultiplePathsSorted(t *testing.T) {
 	dups := []comparator.DuplicateKey{
-		{Path: "z/last", Key: "K", KV1: "stage", KV2: "prod"},
-		{Path: "a/first", Key: "K", KV1: "stage", KV2: "prod"},
-		{Path: "m/middle", Key: "K", KV1: "stage", KV2: "prod"},
+		{Path: "z/last", Key: "K", KV1: "alpha", KV2: "beta"},
+		{Path: "a/first", Key: "K", KV1: "alpha", KV2: "beta"},
+		{Path: "m/middle", Key: "K", KV1: "alpha", KV2: "beta"},
 	}
 	got := groupByPath(dups)
 	if len(got) != 3 {
@@ -67,9 +67,9 @@ func TestGroupByPath_MultiplePathsSorted(t *testing.T) {
 
 func TestGroupByPath_PathsAffectedCount(t *testing.T) {
 	dups := []comparator.DuplicateKey{
-		{Path: "app/db", Key: "HOST", KV1: "stage", KV2: "prod"},
-		{Path: "app/db", Key: "PASS", KV1: "stage", KV2: "prod"},
-		{Path: "app/redis", Key: "URL", KV1: "stage", KV2: "prod"},
+		{Path: "app/db", Key: "HOST", KV1: "alpha", KV2: "beta"},
+		{Path: "app/db", Key: "PASS", KV1: "alpha", KV2: "beta"},
+		{Path: "app/redis", Key: "URL", KV1: "alpha", KV2: "beta"},
 	}
 	got := groupByPath(dups)
 	if len(got) != 2 {

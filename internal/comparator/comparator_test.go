@@ -71,8 +71,8 @@ func TestCompare_NoDuplicatesWhenValuesDiffer(t *testing.T) {
 			"kv2": {"app/db"},
 		},
 		secrets: map[string]map[string]map[string]interface{}{
-			"kv1": {"app/db": {"HOST": "stage-db.example.com"}},
-			"kv2": {"app/db": {"HOST": "prod-db.example.com"}},
+			"kv1": {"app/db": {"HOST": "db-a.example.com"}},
+			"kv2": {"app/db": {"HOST": "db-b.example.com"}},
 		},
 	}
 	result, err := newCmp(mv, emptyEx()).Compare(context.Background())
@@ -114,8 +114,8 @@ func TestCompare_SkipsExcludedKey(t *testing.T) {
 			"kv2": {"app/cfg"},
 		},
 		secrets: map[string]map[string]map[string]interface{}{
-			"kv1": {"app/cfg": {"env": "prod", "HOST": "same"}},
-			"kv2": {"app/cfg": {"env": "prod", "HOST": "same"}},
+			"kv1": {"app/cfg": {"env": "value", "HOST": "same"}},
+			"kv2": {"app/cfg": {"env": "value", "HOST": "same"}},
 		},
 	}
 	ex := &config.CompiledExclusions{
@@ -141,11 +141,11 @@ func TestCompare_SkipsExcludedPath(t *testing.T) {
 		secrets: map[string]map[string]map[string]interface{}{
 			"kv1": {
 				"common/shared": {"KEY": "value"},
-				"app/db":        {"HOST": "different-stage"},
+				"app/db":        {"HOST": "value-a"},
 			},
 			"kv2": {
 				"common/shared": {"KEY": "value"},
-				"app/db":        {"HOST": "different-prod"},
+				"app/db":        {"HOST": "value-b"},
 			},
 		},
 	}

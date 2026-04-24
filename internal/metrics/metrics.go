@@ -18,8 +18,11 @@ type Metrics struct {
 	pathsCompared  *prometheus.GaugeVec
 
 	mu         sync.Mutex
-	activeKeys map[labelKey]struct{}
+	activeKeys map[mountPair]map[labelKey]struct{}
 }
+
+// mountPair identifies a specific kv1/kv2 combination for per-pair GC bookkeeping.
+type mountPair struct{ kv1, kv2 string }
 
 type labelKey struct {
 	kv1, kv2, path, key string
@@ -40,12 +43,12 @@ func New(reg prometheus.Registerer) *Metrics {
 
 		scanDuration: f.NewGauge(prometheus.GaugeOpts{
 			Name: "vault_kv_scan_duration_seconds",
-			Help: "Duration of the last scan in seconds",
+			Help: "Duration of the last scan cycle in seconds",
 		}),
 
 		scanTimestamp: f.NewGauge(prometheus.GaugeOpts{
 			Name: "vault_kv_scan_last_timestamp_seconds",
-			Help: "Unix timestamp of the last successful scan",
+			Help: "Unix timestamp of the last successful scan cycle",
 		}),
 
 		scanErrors: f.NewCounter(prometheus.CounterOpts{
@@ -58,7 +61,7 @@ func New(reg prometheus.Registerer) *Metrics {
 			Help: "Number of paths compared in the last scan",
 		}, []string{"kv1", "kv2"}),
 
-		activeKeys: make(map[labelKey]struct{}),
+		activeKeys: make(map[mountPair]map[labelKey]struct{}),
 	}
 }
 
@@ -66,12 +69,21 @@ func (m *Metrics) RecordError() {
 	m.scanErrors.Inc()
 }
 
-func (m *Metrics) RecordScan(result *comparator.Result, durationSecs, timestamp float64) {
+// RecordCycle records overall scan-cycle metrics (duration, timestamp).
+// Called once per scan cycle after all pairs complete successfully.
+func (m *Metrics) RecordCycle(durationSecs, timestamp float64) {
+	m.scanDuration.Set(durationSecs)
+	m.scanTimestamp.Set(timestamp)
+}
+
+// RecordPair records per-pair metrics and garbage-collects stale duplicate_key series
+// for that specific pair. Safe to call concurrently for different pairs.
+func (m *Metrics) RecordPair(result *comparator.Result) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.scanDuration.Set(durationSecs)
-	m.scanTimestamp.Set(timestamp)
+	pair := mountPair{kv1: result.KV1, kv2: result.KV2}
+
 	m.pathsCompared.WithLabelValues(result.KV1, result.KV2).Set(float64(result.PathsCompared))
 	m.duplicateCount.WithLabelValues(result.KV1, result.KV2).Set(float64(len(result.Duplicates)))
 
@@ -80,17 +92,16 @@ func (m *Metrics) RecordScan(result *comparator.Result, durationSecs, timestamp 
 		newKeys[labelKey{kv1: d.KV1, kv2: d.KV2, path: d.Path, key: d.Key}] = struct{}{}
 	}
 
-	// Remove metrics that disappeared in the new scan
-	for lbl := range m.activeKeys {
+	// Remove series that disappeared in the new scan for this pair only.
+	for lbl := range m.activeKeys[pair] {
 		if _, ok := newKeys[lbl]; !ok {
 			m.duplicateKey.DeleteLabelValues(lbl.kv1, lbl.kv2, lbl.path, lbl.key)
 		}
 	}
 
-	// Set metrics for found duplicates
 	for lbl := range newKeys {
 		m.duplicateKey.WithLabelValues(lbl.kv1, lbl.kv2, lbl.path, lbl.key).Set(1)
 	}
 
-	m.activeKeys = newKeys
+	m.activeKeys[pair] = newKeys
 }

@@ -7,85 +7,125 @@ import (
 	"time"
 )
 
-// --- LoadExclusions ---
+// --- LoadPairs ---
 
-func TestLoadExclusions_FileNotExist(t *testing.T) {
-	ex, err := LoadExclusions("/nonexistent/config.yaml")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(ex.Keys) != 0 || len(ex.KeyPatterns) != 0 || len(ex.PathPatterns) != 0 {
-		t.Fatal("expected empty exclusions for missing file")
+func TestLoadPairs_FileNotExist(t *testing.T) {
+	_, err := LoadPairs("/nonexistent/config.yaml")
+	if err == nil {
+		t.Fatal("expected error for missing file")
 	}
 }
 
-func TestLoadExclusions_ValidFile(t *testing.T) {
-	content := `
-exclude:
-  keys:
-    - env
-    - namespace
-  key_patterns:
-    - "^APP_.*"
-  path_patterns:
-    - "^common/.*"
-`
-	ex, err := LoadExclusions(writeTempConfig(t, content))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if _, ok := ex.Keys["env"]; !ok {
-		t.Error("expected 'env' in keys")
-	}
-	if _, ok := ex.Keys["namespace"]; !ok {
-		t.Error("expected 'namespace' in keys")
-	}
-	if len(ex.KeyPatterns) != 1 {
-		t.Errorf("expected 1 key pattern, got %d", len(ex.KeyPatterns))
-	}
-	if len(ex.PathPatterns) != 1 {
-		t.Errorf("expected 1 path pattern, got %d", len(ex.PathPatterns))
-	}
-}
-
-func TestLoadExclusions_EmptyFile(t *testing.T) {
-	ex, err := LoadExclusions(writeTempConfig(t, ""))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(ex.Keys) != 0 || len(ex.KeyPatterns) != 0 || len(ex.PathPatterns) != 0 {
-		t.Fatal("expected empty exclusions for empty file")
-	}
-}
-
-func TestLoadExclusions_InvalidYAML(t *testing.T) {
-	_, err := LoadExclusions(writeTempConfig(t, "{{invalid"))
+func TestLoadPairs_InvalidYAML(t *testing.T) {
+	_, err := LoadPairs(writeTempConfig(t, "{{invalid"))
 	if err == nil {
 		t.Fatal("expected error for invalid YAML")
 	}
 }
 
-func TestLoadExclusions_InvalidKeyPattern(t *testing.T) {
-	content := `
-exclude:
-  key_patterns:
-    - "["
-`
-	_, err := LoadExclusions(writeTempConfig(t, content))
+func TestLoadPairs_NoPairs(t *testing.T) {
+	_, err := LoadPairs(writeTempConfig(t, "pairs: []"))
 	if err == nil {
-		t.Fatal("expected error for invalid regex in key_patterns")
+		t.Fatal("expected error when no pairs defined")
 	}
 }
 
-func TestLoadExclusions_InvalidPathPattern(t *testing.T) {
+func TestLoadPairs_MissingKV1(t *testing.T) {
 	content := `
-exclude:
-  path_patterns:
-    - "["
+pairs:
+  - kv2: beta
 `
-	_, err := LoadExclusions(writeTempConfig(t, content))
+	_, err := LoadPairs(writeTempConfig(t, content))
 	if err == nil {
-		t.Fatal("expected error for invalid regex in path_patterns")
+		t.Fatal("expected error for missing kv1")
+	}
+}
+
+func TestLoadPairs_MissingKV2(t *testing.T) {
+	content := `
+pairs:
+  - kv1: alpha
+`
+	_, err := LoadPairs(writeTempConfig(t, content))
+	if err == nil {
+		t.Fatal("expected error for missing kv2")
+	}
+}
+
+func TestLoadPairs_ValidFile(t *testing.T) {
+	content := `
+pairs:
+  - kv1: alpha
+    kv2: beta
+    exclude:
+      keys:
+        - env
+        - namespace
+      key_patterns:
+        - "^APP_.*"
+      path_patterns:
+        - "^common/.*"
+  - kv1: gamma
+    kv2: alpha
+`
+	pairs, err := LoadPairs(writeTempConfig(t, content))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(pairs) != 2 {
+		t.Fatalf("expected 2 pairs, got %d", len(pairs))
+	}
+
+	p := pairs[0]
+	if p.KV1 != "alpha" || p.KV2 != "beta" {
+		t.Errorf("pair[0]: expected alpha/beta, got %s/%s", p.KV1, p.KV2)
+	}
+	if _, ok := p.Exclusions.Keys["env"]; !ok {
+		t.Error("expected 'env' in pair[0] excluded keys")
+	}
+	if len(p.Exclusions.KeyPatterns) != 1 {
+		t.Errorf("expected 1 key pattern in pair[0], got %d", len(p.Exclusions.KeyPatterns))
+	}
+	if len(p.Exclusions.PathPatterns) != 1 {
+		t.Errorf("expected 1 path pattern in pair[0], got %d", len(p.Exclusions.PathPatterns))
+	}
+
+	p2 := pairs[1]
+	if p2.KV1 != "gamma" || p2.KV2 != "alpha" {
+		t.Errorf("pair[1]: expected gamma/alpha, got %s/%s", p2.KV1, p2.KV2)
+	}
+	if len(p2.Exclusions.Keys) != 0 || len(p2.Exclusions.KeyPatterns) != 0 {
+		t.Error("pair[1] should have no exclusions")
+	}
+}
+
+func TestLoadPairs_InvalidKeyPattern(t *testing.T) {
+	content := `
+pairs:
+  - kv1: alpha
+    kv2: beta
+    exclude:
+      key_patterns:
+        - "["
+`
+	_, err := LoadPairs(writeTempConfig(t, content))
+	if err == nil {
+		t.Fatal("expected error for invalid key_pattern")
+	}
+}
+
+func TestLoadPairs_InvalidPathPattern(t *testing.T) {
+	content := `
+pairs:
+  - kv1: alpha
+    kv2: beta
+    exclude:
+      path_patterns:
+        - "["
+`
+	_, err := LoadPairs(writeTempConfig(t, content))
+	if err == nil {
+		t.Fatal("expected error for invalid path_pattern")
 	}
 }
 
@@ -123,24 +163,6 @@ func TestLoad_UnknownAuthMethod(t *testing.T) {
 	_, err := Load()
 	if err == nil {
 		t.Fatal("expected error for unknown auth method")
-	}
-}
-
-func TestLoad_MissingKV1Mount(t *testing.T) {
-	setRequiredEnv(t, "token")
-	t.Setenv("KV1_MOUNT", "")
-	_, err := Load()
-	if err == nil {
-		t.Fatal("expected error for missing KV1_MOUNT")
-	}
-}
-
-func TestLoad_MissingKV2Mount(t *testing.T) {
-	setRequiredEnv(t, "token")
-	t.Setenv("KV2_MOUNT", "")
-	_, err := Load()
-	if err == nil {
-		t.Fatal("expected error for missing KV2_MOUNT")
 	}
 }
 
@@ -187,10 +209,7 @@ func setRequiredEnv(t *testing.T, authMethod string) {
 	t.Setenv("VAULT_AUTH_METHOD", authMethod)
 	t.Setenv("VAULT_TOKEN", "test-token")
 	t.Setenv("VAULT_K8S_ROLE", "test-role")
-	t.Setenv("KV1_MOUNT", "stage")
-	t.Setenv("KV2_MOUNT", "prod")
 	t.Setenv("SCAN_INTERVAL", "5m")
-	t.Setenv("CONFIG_FILE", "/nonexistent/config.yaml")
 }
 
 func writeTempConfig(t *testing.T, content string) string {

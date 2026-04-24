@@ -41,9 +41,10 @@ func main() {
 			"scan_timeout", cfg.ScanTimeout, "scan_interval", cfg.ScanInterval)
 	}
 
-	ex, err := cfg.CompileExclusions()
+	// Load initial pairs — required at startup.
+	initialPairs, err := config.LoadPairs(cfg.ConfigFile)
 	if err != nil {
-		log.Error("failed to compile exclusions", "err", err)
+		log.Error("failed to load pairs config", "err", err)
 		os.Exit(1)
 	}
 
@@ -61,48 +62,78 @@ func main() {
 
 	reg := prometheus.NewRegistry()
 	m := metrics.New(reg)
-	cmp := comparator.New(client, ex, cfg.KV1Mount, cfg.KV2Mount, log)
 
 	// Pod is considered unhealthy if no scan has succeeded within this window.
 	livenessThreshold := 3*cfg.ScanInterval + cfg.ScanTimeout
 
 	var (
 		mu              sync.RWMutex
-		lastResult      *comparator.Result
+		lastResults     []*comparator.Result
 		lastSuccessTime time.Time
+		currentPairs    = initialPairs
 	)
 
 	runScan := func() {
+		// Reload pairs config before every scan; on error keep previous pairs.
+		if newPairs, err := config.LoadPairs(cfg.ConfigFile); err != nil {
+			log.Warn("failed to reload pairs config, using previous", "err", err)
+		} else {
+			mu.Lock()
+			currentPairs = newPairs
+			mu.Unlock()
+		}
+
+		mu.RLock()
+		pairs := currentPairs
+		mu.RUnlock()
+
 		start := time.Now()
 		ctx, cancel := context.WithTimeout(context.Background(), cfg.ScanTimeout)
 		defer cancel()
 
-		if ex, err := config.LoadExclusions(cfg.ConfigFile); err != nil {
-			log.Warn("failed to reload exclusions, using previous", "err", err)
-		} else {
-			cmp.SetExclusions(ex)
-		}
-
-		// Refresh Vault token before scan (relevant for kubernetes auth)
+		// Refresh Vault token before scan (relevant for kubernetes auth).
 		if err := client.Refresh(ctx); err != nil {
 			log.Error("failed to refresh Vault token", "err", err)
 			m.RecordError()
 			return
 		}
 
-		result, err := cmp.Compare(ctx)
-		elapsed := time.Since(start).Seconds()
-		if err != nil {
-			log.Error("scan error", "err", err)
-			m.RecordError()
+		results := make([]*comparator.Result, len(pairs))
+		var (
+			wg     sync.WaitGroup
+			errMu  sync.Mutex
+			anyErr bool
+		)
+
+		for i, pair := range pairs {
+			wg.Add(1)
+			go func(i int, pair config.CompiledPair) {
+				defer wg.Done()
+				cmp := comparator.New(client, pair.Exclusions, pair.KV1, pair.KV2, log)
+				result, err := cmp.Compare(ctx)
+				if err != nil {
+					log.Error("scan error", "kv1", pair.KV1, "kv2", pair.KV2, "err", err)
+					m.RecordError()
+					errMu.Lock()
+					anyErr = true
+					errMu.Unlock()
+					return
+				}
+				result.ScannedAt = time.Now().UTC()
+				m.RecordPair(result)
+				results[i] = result
+			}(i, pair)
+		}
+		wg.Wait()
+
+		if anyErr {
 			return
 		}
 
-		result.ScannedAt = time.Now().UTC()
-		m.RecordScan(result, elapsed, float64(time.Now().Unix()))
+		m.RecordCycle(time.Since(start).Seconds(), float64(time.Now().Unix()))
 
 		mu.Lock()
-		lastResult = result
+		lastResults = results
 		lastSuccessTime = time.Now()
 		mu.Unlock()
 	}
@@ -129,7 +160,7 @@ func main() {
 	})
 
 	// /readyz — readiness probe.
-	// Returns 503 until the first successful scan completes.
+	// Returns 503 until all pairs complete their first successful scan.
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
 		mu.RLock()
 		ready := !lastSuccessTime.IsZero()
@@ -146,24 +177,31 @@ func main() {
 
 	mux.HandleFunc("/report", func(w http.ResponseWriter, _ *http.Request) {
 		mu.RLock()
-		r := lastResult
+		results := lastResults
 		mu.RUnlock()
 
 		w.Header().Set("Content-Type", "application/json")
-		if r == nil {
-			_, _ = w.Write([]byte(`{"duplicates":[],"paths_affected":0,"paths_compared":0}`))
+		if results == nil {
+			_, _ = w.Write([]byte(`{"pairs":[]}`))
 			return
 		}
 
-		paths := groupByPath(r.Duplicates)
-		_ = json.NewEncoder(w).Encode(reportResponse{
-			Duplicates:    paths,
-			PathsAffected: len(paths),
-			PathsCompared: r.PathsCompared,
-			KV1:           r.KV1,
-			KV2:           r.KV2,
-			ScannedAt:     r.ScannedAt,
-		})
+		pairs := make([]pairReport, 0, len(results))
+		for _, r := range results {
+			if r == nil {
+				continue
+			}
+			paths := groupByPath(r.Duplicates)
+			pairs = append(pairs, pairReport{
+				KV1:           r.KV1,
+				KV2:           r.KV2,
+				Duplicates:    paths,
+				PathsAffected: len(paths),
+				PathsCompared: r.PathsCompared,
+				ScannedAt:     r.ScannedAt,
+			})
+		}
+		_ = json.NewEncoder(w).Encode(reportResponse{Pairs: pairs})
 	})
 
 	srv := &http.Server{
@@ -210,13 +248,17 @@ type reportPath struct {
 	Keys []string `json:"keys"`
 }
 
-type reportResponse struct {
+type pairReport struct {
+	KV1           string       `json:"kv1"`
+	KV2           string       `json:"kv2"`
 	Duplicates    []reportPath `json:"duplicates"`
 	PathsAffected int          `json:"paths_affected"`
 	PathsCompared int          `json:"paths_compared"`
-	KV1           string       `json:"kv1"`
-	KV2           string       `json:"kv2"`
 	ScannedAt     time.Time    `json:"scanned_at"`
+}
+
+type reportResponse struct {
+	Pairs []pairReport `json:"pairs"`
 }
 
 func groupByPath(dups []comparator.DuplicateKey) []reportPath {

@@ -14,71 +14,52 @@ func newTestMetrics() (*Metrics, prometheus.Gatherer) {
 	return New(reg), reg
 }
 
-func TestRecordScan_DuplicateCount(t *testing.T) {
+func TestRecordPair_DuplicateCount(t *testing.T) {
 	m, _ := newTestMetrics()
-	m.RecordScan(resultWith(2, 10), 1.5, 1000.0)
+	m.RecordPair(resultWith(2, 10))
 
-	if got := testutil.ToFloat64(m.duplicateCount.WithLabelValues("stage", "prod")); got != 2 {
+	if got := testutil.ToFloat64(m.duplicateCount.WithLabelValues("alpha", "beta")); got != 2 {
 		t.Errorf("vault_kv_duplicate_count: expected 2, got %v", got)
 	}
 }
 
-func TestRecordScan_PathsCompared(t *testing.T) {
+func TestRecordPair_PathsCompared(t *testing.T) {
 	m, _ := newTestMetrics()
-	m.RecordScan(resultWith(0, 7), 0, 0)
+	m.RecordPair(resultWith(0, 7))
 
-	if got := testutil.ToFloat64(m.pathsCompared.WithLabelValues("stage", "prod")); got != 7 {
+	if got := testutil.ToFloat64(m.pathsCompared.WithLabelValues("alpha", "beta")); got != 7 {
 		t.Errorf("vault_kv_paths_compared: expected 7, got %v", got)
 	}
 }
 
-func TestRecordScan_Duration(t *testing.T) {
-	m, _ := newTestMetrics()
-	m.RecordScan(resultWith(0, 0), 3.14, 0)
-
-	if got := testutil.ToFloat64(m.scanDuration); got != 3.14 {
-		t.Errorf("vault_kv_scan_duration_seconds: expected 3.14, got %v", got)
-	}
-}
-
-func TestRecordScan_Timestamp(t *testing.T) {
-	m, _ := newTestMetrics()
-	m.RecordScan(resultWith(0, 0), 0, 999.0)
-
-	if got := testutil.ToFloat64(m.scanTimestamp); got != 999.0 {
-		t.Errorf("vault_kv_scan_last_timestamp_seconds: expected 999, got %v", got)
-	}
-}
-
-func TestRecordScan_DuplicateKeyGauge(t *testing.T) {
+func TestRecordPair_DuplicateKeyGauge(t *testing.T) {
 	m, _ := newTestMetrics()
 	result := &comparator.Result{
-		KV1: "stage", KV2: "prod",
+		KV1: "alpha", KV2: "beta",
 		Duplicates: []comparator.DuplicateKey{
-			{Path: "app/db", Key: "HOST", KV1: "stage", KV2: "prod"},
+			{Path: "app/db", Key: "HOST", KV1: "alpha", KV2: "beta"},
 		},
 	}
-	m.RecordScan(result, 0, 0)
+	m.RecordPair(result)
 
-	if got := testutil.ToFloat64(m.duplicateKey.WithLabelValues("stage", "prod", "app/db", "HOST")); got != 1 {
+	if got := testutil.ToFloat64(m.duplicateKey.WithLabelValues("alpha", "beta", "app/db", "HOST")); got != 1 {
 		t.Errorf("vault_kv_duplicate_key: expected 1, got %v", got)
 	}
 }
 
-func TestRecordScan_StaleKeyRemovedAfterNextScan(t *testing.T) {
+func TestRecordPair_StaleKeyRemovedAfterNextScan(t *testing.T) {
 	m, reg := newTestMetrics()
 
 	first := &comparator.Result{
-		KV1: "stage", KV2: "prod",
+		KV1: "alpha", KV2: "beta",
 		Duplicates: []comparator.DuplicateKey{
-			{Path: "app/db", Key: "HOST", KV1: "stage", KV2: "prod"},
+			{Path: "app/db", Key: "HOST", KV1: "alpha", KV2: "beta"},
 		},
 	}
-	m.RecordScan(first, 0, 0)
+	m.RecordPair(first)
 
-	// second scan: duplicate resolved
-	second := &comparator.Result{KV1: "stage", KV2: "prod", Duplicates: []comparator.DuplicateKey{}}
-	m.RecordScan(second, 0, 0)
+	second := &comparator.Result{KV1: "alpha", KV2: "beta", Duplicates: []comparator.DuplicateKey{}}
+	m.RecordPair(second)
 
 	mfs, err := reg.Gather()
 	if err != nil {
@@ -98,17 +79,56 @@ func TestRecordScan_StaleKeyRemovedAfterNextScan(t *testing.T) {
 	}
 }
 
-func TestRecordScan_DuplicateCountUpdatedAcrossScans(t *testing.T) {
+// Stale keys from one pair must not be GC'd when another pair is scanned.
+func TestRecordPair_GCIsolatedBetweenPairs(t *testing.T) {
 	m, _ := newTestMetrics()
 
-	m.RecordScan(resultWith(3, 0), 0, 0)
-	if got := testutil.ToFloat64(m.duplicateCount.WithLabelValues("stage", "prod")); got != 3 {
+	pairOne := &comparator.Result{
+		KV1: "alpha", KV2: "beta",
+		Duplicates: []comparator.DuplicateKey{
+			{Path: "app/db", Key: "HOST", KV1: "alpha", KV2: "beta"},
+		},
+	}
+	m.RecordPair(pairOne)
+
+	// Scan a different pair — should not remove alpha/beta series.
+	pairTwo := &comparator.Result{KV1: "gamma", KV2: "alpha", Duplicates: []comparator.DuplicateKey{}}
+	m.RecordPair(pairTwo)
+
+	if got := testutil.ToFloat64(m.duplicateKey.WithLabelValues("alpha", "beta", "app/db", "HOST")); got != 1 {
+		t.Errorf("alpha/beta series should survive a scan of gamma/alpha pair, got %v", got)
+	}
+}
+
+func TestRecordPair_DuplicateCountUpdatedAcrossScans(t *testing.T) {
+	m, _ := newTestMetrics()
+
+	m.RecordPair(resultWith(3, 0))
+	if got := testutil.ToFloat64(m.duplicateCount.WithLabelValues("alpha", "beta")); got != 3 {
 		t.Fatalf("expected 3 after first scan, got %v", got)
 	}
 
-	m.RecordScan(resultWith(1, 0), 0, 0)
-	if got := testutil.ToFloat64(m.duplicateCount.WithLabelValues("stage", "prod")); got != 1 {
+	m.RecordPair(resultWith(1, 0))
+	if got := testutil.ToFloat64(m.duplicateCount.WithLabelValues("alpha", "beta")); got != 1 {
 		t.Errorf("expected 1 after second scan, got %v", got)
+	}
+}
+
+func TestRecordCycle_Duration(t *testing.T) {
+	m, _ := newTestMetrics()
+	m.RecordCycle(3.14, 0)
+
+	if got := testutil.ToFloat64(m.scanDuration); got != 3.14 {
+		t.Errorf("vault_kv_scan_duration_seconds: expected 3.14, got %v", got)
+	}
+}
+
+func TestRecordCycle_Timestamp(t *testing.T) {
+	m, _ := newTestMetrics()
+	m.RecordCycle(0, 999.0)
+
+	if got := testutil.ToFloat64(m.scanTimestamp); got != 999.0 {
+		t.Errorf("vault_kv_scan_last_timestamp_seconds: expected 999, got %v", got)
 	}
 }
 
@@ -126,7 +146,7 @@ func TestRecordError(t *testing.T) {
 func resultWith(n, p int) *comparator.Result {
 	dups := make([]comparator.DuplicateKey, n)
 	for i := range dups {
-		dups[i] = comparator.DuplicateKey{KV1: "stage", KV2: "prod", Path: "app/db", Key: "KEY"}
+		dups[i] = comparator.DuplicateKey{KV1: "alpha", KV2: "beta", Path: "app/db", Key: "KEY"}
 	}
-	return &comparator.Result{KV1: "stage", KV2: "prod", PathsCompared: p, Duplicates: dups}
+	return &comparator.Result{KV1: "alpha", KV2: "beta", PathsCompared: p, Duplicates: dups}
 }
