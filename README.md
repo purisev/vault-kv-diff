@@ -50,7 +50,8 @@ The `vault_kv_duplicate_key` metric is automatically removed when a duplicate is
 | Path | Description |
 |---|---|
 | `/metrics` | Prometheus metrics |
-| `/healthz` | Health check, returns `200 ok` |
+| `/healthz` | Liveness probe — `503` if the last successful scan is older than `3×SCAN_INTERVAL + SCAN_TIMEOUT`; `200` during initial startup |
+| `/readyz` | Readiness probe — `503` until the first scan completes successfully |
 | `/report` | JSON report of current duplicates (without values) |
 
 Example `/report` response:
@@ -84,7 +85,9 @@ Example `/report` response:
 | `KV1_MOUNT` | — | First KV mount (e.g. `stage`), required |
 | `KV2_MOUNT` | — | Second KV mount (e.g. `prod`), required |
 | `SCAN_INTERVAL` | `5m` | Scan interval as a Go duration string (`30s`, `5m`, `1h`) |
+| `SCAN_TIMEOUT` | `4m` | Per-scan context timeout; should be less than `SCAN_INTERVAL` |
 | `HTTP_PORT` | `9090` | HTTP server port |
+| `LOG_LEVEL` | `info` | Log level: `debug`, `info`, `warn`, `error` |
 | `CONFIG_FILE` | `config.yaml` | Path to the exclusions file |
 
 ### Exclusions file (`config.yaml`)
@@ -164,6 +167,26 @@ spec:
               value: "prod"
             - name: SCAN_INTERVAL
               value: "5m"
+            - name: SCAN_TIMEOUT
+              value: "4m"
+          startupProbe:
+            httpGet:
+              path: /readyz
+              port: 9090
+            periodSeconds: 10
+            failureThreshold: 60  # up to 10 minutes for the first scan
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 9090
+            periodSeconds: 15
+            failureThreshold: 2
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9090
+            periodSeconds: 30
+            failureThreshold: 3
           volumeMounts:
             - name: config
               mountPath: /app/config.yaml

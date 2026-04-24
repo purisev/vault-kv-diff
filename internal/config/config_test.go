@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // --- LoadExclusions ---
@@ -149,6 +150,32 @@ func TestLoad_InvalidScanInterval(t *testing.T) {
 	_, err := Load()
 	if err == nil {
 		t.Fatal("expected error for invalid SCAN_INTERVAL")
+	}
+}
+
+func TestLoad_InvalidScanTimeout(t *testing.T) {
+	setRequiredEnv(t, "token")
+	t.Setenv("SCAN_TIMEOUT", "notaduration")
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for invalid SCAN_TIMEOUT")
+	}
+}
+
+func TestLoad_DefaultsApplied(t *testing.T) {
+	setRequiredEnv(t, "token")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.ScanInterval != 5*time.Minute {
+		t.Errorf("expected default ScanInterval 5m, got %v", cfg.ScanInterval)
+	}
+	if cfg.ScanTimeout != 4*time.Minute {
+		t.Errorf("expected default ScanTimeout 4m, got %v", cfg.ScanTimeout)
+	}
+	if cfg.LogLevel != "info" {
+		t.Errorf("expected default LogLevel info, got %s", cfg.LogLevel)
 	}
 }
 

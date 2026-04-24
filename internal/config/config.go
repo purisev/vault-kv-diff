@@ -19,7 +19,9 @@ type Config struct {
 	KV1Mount     string
 	KV2Mount     string
 	ScanInterval time.Duration
+	ScanTimeout  time.Duration
 	HTTPPort     string
+	LogLevel     string
 	ConfigFile   string
 	Exclude      ExcludeConfig
 }
@@ -47,6 +49,11 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("invalid SCAN_INTERVAL: %w", err)
 	}
 
+	timeout, err := time.ParseDuration(getenv("SCAN_TIMEOUT", "4m"))
+	if err != nil {
+		return nil, fmt.Errorf("invalid SCAN_TIMEOUT: %w", err)
+	}
+
 	cfg := &Config{
 		VaultAddr:    getenv("VAULT_ADDR", ""),
 		VaultToken:   getenv("VAULT_TOKEN", ""),
@@ -57,7 +64,9 @@ func Load() (*Config, error) {
 		KV1Mount:     getenv("KV1_MOUNT", ""),
 		KV2Mount:     getenv("KV2_MOUNT", ""),
 		ScanInterval: interval,
+		ScanTimeout:  timeout,
 		HTTPPort:     getenv("HTTP_PORT", "9090"),
+		LogLevel:     getenv("LOG_LEVEL", "info"),
 		ConfigFile:   getenv("CONFIG_FILE", "config.yaml"),
 	}
 

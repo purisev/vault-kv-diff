@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/purisev/vault-kv-diff/internal/config"
 )
@@ -25,6 +26,7 @@ type Result struct {
 	PathsCompared int            `json:"paths_compared"`
 	KV1           string         `json:"kv1"`
 	KV2           string         `json:"kv2"`
+	ScannedAt     time.Time      `json:"scanned_at"`
 }
 
 type Comparator struct {
